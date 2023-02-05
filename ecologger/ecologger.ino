@@ -10,12 +10,11 @@ Configuração do Cartao SD
 
   Nesse exemplo vai gravar 30 segundos e dormir por 1 minuto
 
-  Para reiniciar as gravações delete a pasta rec
 */
 #define RESET_PIN A3
 #define SLEEP_DELAY 500
 #define LDR_PIN A1
-#define USE_LONG_FILE_NAMES 0
+#define USE_UTF8_LONG_NAMES 1
 #define CARDCS 9  // Card chip select pin
 #define RESET 8   // VS1053 reset pin (output)
 #define CS 6      // VS1053 chip select pin (output)
@@ -23,18 +22,23 @@ Configuração do Cartao SD
 #define DREQ 2    // VS1053 Data request, ideally an Interrupt pin
 #define SPI_SPEED SD_SCK_MHZ(50)
 #define RECBUFFSIZE 128  // 64 or 128 bytes.
+#define countof(a) (sizeof(a) / sizeof(a[0]))
 
+#include <ThreeWire.h>
+#include <RtcDS1302.h>
 #include <Adafruit_BMP085.h>
 #include <DeepSleepScheduler.h>
 #include "Adafruit_VS1053.h"
 #include "LDR.h"
 
+ThreeWire myWire(4, 5, 3);  // IO, SCLK, CE
+RtcDS1302<ThreeWire> Rtc(myWire);
+
 uint8_t recording_buffer[RECBUFFSIZE];
 unsigned int timeSleep = -1;
 unsigned int timeRecording = -1;
 unsigned long int startTimeLoop = -1;
-uint16_t fileNumber = -1;
-
+char fileName[21];
 SdFat sd;
 File recording;
 
@@ -68,81 +72,39 @@ String readLine(File& file) {
   return line;
 }
 
-void checkFiles() {
-
-  File recordingNumber;
-  fileNumber = 1;
-  if (!sd.begin(CARDCS, SPI_SPEED)) {
-    Serial.println(F("Cartão SD não identificado"));
-    while (1)
-      ;
-  }
-  File dir;
-  dir.open("rec", O_READ);
-  if (!dir.isDir()) {
-    sd.mkdir("rec");
-    Serial.println(F("Diretorio rec nao encontrado"));
-
-    Serial.println(F("Criando arquivo de configuracao..."));
-    recordingNumber.open("rec/files.txt", O_RDWR | O_CREAT | O_TRUNC);
-    recordingNumber.println("1");
-    recordingNumber.close();
-  } else {
-    Serial.println(F("Diretorio rec encontrado"));
-    recordingNumber.open("rec/files.txt", O_READ);
-    if (recordingNumber.isFile()) {
-      String line1 = readLine(recordingNumber);
-      recordingNumber.close();
-      fileNumber = line1.toInt();
-      Serial.print(F("Quantidade de arquivos: "));
-      Serial.println(fileNumber);
-      fileNumber++;
-      recordingNumber.open("rec/files.txt", O_RDWR | O_CREAT | O_TRUNC);
-      recordingNumber.println(String(fileNumber));
-      recordingNumber.close();
-    } else {
-      recordingNumber.close();
-      Serial.println(F("Diretorio corrompido, limpe o diretorio rec"));
-      while (1)
-        ;
-    }
-  }
-  dir.close();
-
-  return fileNumber;
-}
 
 void createCsv() {
   float value;
-  String line;
+  String line = "";
   int32_t valueint;
-  File csvFile; 
-  char filename[15];
-
-  sprintf(filename, "rec/%04i.csv", fileNumber);
-  Serial.print(F("Criando arquivo csv: "));
-  Serial.println(filename);
-  csvFile.open(filename, O_RDWR | O_CREAT | O_TRUNC);
+  File csvFile;
+  Serial.println(F("Abrindo arquivo csv: "));
+  csvFile.open("data.csv", O_RDWR | O_CREAT | O_AT_END);
+  // data
+  line.concat(fileName);
+  line.concat(";");
   // lum
   value = ldr.get();
-  line = "lum;";
   line.concat(value);
-  Serial.println(line);
-  csvFile.println(line);
+  line.concat(";");
   // temperatura
   bmp.readTemperature();
   value = bmp.readTemperature();
-  line = "temp;";
   line.concat(value);
-  Serial.println(line);
-  csvFile.println(line);
+  line.concat(";");
   // pressao
   valueint = bmp.readSealevelPressure();
-  line = "press;";
   line.concat(valueint);
   Serial.println(line);
   csvFile.println(line);
 
+
+  RtcDateTime dt = Rtc.GetDateTime();
+  if (!csvFile.timestamp(T_WRITE, dt.Year(), dt.Month(), dt.Day(), dt.Hour(),
+                         dt.Minute(), dt.Second())) {
+    Serial.println(F("Não foi possivel obter a data do csv"));
+
+  }
   csvFile.close();
 }
 
@@ -156,8 +118,14 @@ void setup() {
   // Configuracao do led
   digitalWrite(LED_BUILTIN, HIGH);
   pinMode(LED_BUILTIN, OUTPUT);
-
-  checkFiles();
+  // Configuracao do relogio
+  Rtc.Begin();
+  // Configuracao do SD
+  if (!sd.begin(CARDCS, SPI_SPEED)) {
+    Serial.println(F("Cartão SD não identificado"));
+    while (1)
+      ;
+  }
 
   File config;
   config.open("config.txt", O_RDWR);
@@ -194,25 +162,32 @@ void setup() {
   while (!bmp.begin()) {}
 
   Serial.println(F("Setup concluido"));
-  // delay(timeSleep);
-  // fileNumber = 14;
   scheduler.schedule(sleep);
   // --
   Serial.println(F("Iniciando gravacao!"));
+  RtcDateTime dt = Rtc.GetDateTime();
+  char datestring[15];
+
+  snprintf_P(fileName,
+             countof(fileName),
+             PSTR("%02u%02u%02uT%02u%02u%02u"),
+             dt.Year() - 2000,
+             dt.Month(),
+             dt.Day(),
+             dt.Hour(),
+             dt.Minute(),
+             dt.Second());
   startTimeLoop = millis();
   musicPlayer.startRecordOgg(true);
-  char filename[15];
-  sprintf(filename, "rec/%04i.ogg", fileNumber);
   Serial.print(F("Criando arquivo de audio: "));
-  Serial.println(filename);
-  recording.open(filename, O_RDWR | O_CREAT | O_TRUNC);
-  // ----------
-  // Serial.println(F(""));
-  // File alldir;
-  // if (!alldir.open("/")) {
-  //   Serial.println(F("Erro nos diretorios"));
-  // }
-  // displayDirectoryContent(alldir, 0);
+  char audioFile[18];
+  sprintf(audioFile, "%s.ogg", fileName);
+  Serial.println(audioFile);
+  recording.open(audioFile, O_RDWR | O_CREAT | O_TRUNC);
+  if (!recording.timestamp(T_CREATE, dt.Year(), dt.Month(), dt.Day(), dt.Hour(),
+                           dt.Minute(), dt.Second())) {
+    Serial.println(F("Não foi possivel obter a data de criacao"));
+  }
 }
 
 
@@ -220,6 +195,11 @@ void loop() {
   if (millis() - startTimeLoop > timeRecording) {
     musicPlayer.stopRecordOgg();
     saveRecordedData(false);
+    RtcDateTime dt = Rtc.GetDateTime();
+    if (!recording.timestamp(T_WRITE, dt.Year(), dt.Month(), dt.Day(), dt.Hour(),
+                             dt.Minute(), dt.Second())) {
+      Serial.println(F("Não foi possivel obter a data de gravacao"));
+    }
     recording.close();
 
 
@@ -228,8 +208,6 @@ void loop() {
 
     scheduler.execute();
   } else {
-    // createCsv();
-
     saveRecordedData(true);
   }
 }
@@ -304,30 +282,3 @@ uint16_t saveRecordedData(boolean isrecord) {
 
   return written;
 }
-
-
-// void displayDirectoryContent(File& aDirectory, byte tabulation) {
-//   File file;
-//   char fileName[20];
-
-//   if (!aDirectory.isDir()) return;
-//   aDirectory.rewind();
-
-//   while (file.openNext(&aDirectory, O_READ)) {
-//     if (!file.isHidden()) {
-//       file.getName(fileName, sizeof(fileName));
-//       for (uint8_t i = 0; i < tabulation; i++) Serial.write('\t');
-//       Serial.print(fileName);
-
-//       if (file.isDir()) {
-//         Serial.println(F("/"));
-//         displayDirectoryContent(file, tabulation + 1);
-//       } else {
-//         Serial.write('\t');
-//         Serial.print(file.fileSize());
-//         Serial.println(F(" bytes"));
-//       }
-//     }
-//     file.close();
-//   }
-// }
