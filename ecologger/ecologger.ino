@@ -11,17 +11,23 @@ Configuração do Cartao SD
   Nesse exemplo vai gravar 30 segundos e dormir por 1 minuto
 
 */
-#define RESET_PIN A3
 #define SLEEP_DELAY 500
-#define LDR_PIN A1
 #define USE_UTF8_LONG_NAMES 1
+
+#define RESET_PIN A3 
+#define LDR_PIN A1
+#define THREE_WIRE_IO 4
+#define THREE_WIRE_SCLK 5
+#define THREE_WIRE_CE 3
+#define DHTTYPE DHT11   
+#define DHTPIN A0    
 #define CARDCS 9  // Card chip select pin
 #define RESET 8   // VS1053 reset pin (output)
 #define CS 6      // VS1053 chip select pin (output)
 #define DCS 7     // VS1053 Data/command select pin (output)
 #define DREQ 2    // VS1053 Data request, ideally an Interrupt pin
 #define SPI_SPEED SD_SCK_MHZ(50)
-#define RECBUFFSIZE 128  // 64 or 128 bytes.
+#define RECBUFFSIZE 64  // 64 or 128 bytes.
 #define countof(a) (sizeof(a) / sizeof(a[0]))
 
 #include <ThreeWire.h>
@@ -31,14 +37,14 @@ Configuração do Cartao SD
 #include "Adafruit_VS1053.h"
 #include "LDR.h"
 
-ThreeWire myWire(4, 5, 3);  // IO, SCLK, CE
+ThreeWire myWire(THREE_WIRE_IO, THREE_WIRE_SCLK, THREE_WIRE_CE);  // IO, SCLK, CE
 RtcDS1302<ThreeWire> Rtc(myWire);
 
 uint8_t recording_buffer[RECBUFFSIZE];
-unsigned int timeSleep = -1;
-unsigned int timeRecording = -1;
+unsigned long timeSleep = -1;
+unsigned long timeRecording = -1;
 unsigned long int startTimeLoop = -1;
-char fileName[21];
+char fileName[20];
 SdFat sd;
 File recording;
 
@@ -103,7 +109,6 @@ void createCsv() {
   if (!csvFile.timestamp(T_WRITE, dt.Year(), dt.Month(), dt.Day(), dt.Hour(),
                          dt.Minute(), dt.Second())) {
     Serial.println(F("Não foi possivel obter a data do csv"));
-
   }
   csvFile.close();
 }
@@ -170,7 +175,7 @@ void setup() {
 
   snprintf_P(fileName,
              countof(fileName),
-             PSTR("%02u%02u%02uT%02u%02u%02u"),
+             PSTR("%02u%02u%02u%02u%02u%02u"),
              dt.Year() - 2000,
              dt.Month(),
              dt.Day(),
@@ -202,8 +207,8 @@ void loop() {
     }
     recording.close();
 
-
     createCsv();
+    sd.end();
     delay(500);
 
     scheduler.execute();
